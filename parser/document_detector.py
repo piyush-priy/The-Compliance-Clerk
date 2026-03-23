@@ -1,6 +1,7 @@
 def detect_document_type(pages):
+    # Process the entire document text to ensure we don't miss classification keywords
     combined_text = " ".join(
-        [p["text"][:1000] for p in pages[:5]]
+        [p["text"] for p in pages]
     ).lower()
 
     scores = {

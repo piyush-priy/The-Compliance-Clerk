@@ -6,7 +6,7 @@ from pdf2image import convert_from_path
 def clean_text(text):
     if not text:
         return ""
-    return text.replace("\n", " ").strip()
+    return text.strip()
 
 
 def is_garbage(text):
@@ -30,17 +30,36 @@ def extract_text_pdfplumber(pdf_path):
 def extract_text_ocr_images(images, page_index):
     img = images[page_index]
 
-    text = pytesseract.image_to_string(
+    # Multi-language segmentation modes
+    text_psm3 = pytesseract.image_to_string(
         img,
-        lang="eng+hin+guj"
+        lang="eng+hin+guj",
+        config="--psm 3"
     )
 
-    return clean_text(text)
+    text_psm6 = pytesseract.image_to_string(
+        img,
+        lang="eng+hin+guj",
+        config="--psm 6"
+    )
+    
+    # Clean the spacing of both
+    t3 = clean_text(text_psm3)
+    t6 = clean_text(text_psm6)
+
+    # Token Optimization: If the engine produced the exact same text for both PSM modes, 
+    # only return one copy to avoid doubling the token cost.
+    if t3 == t6:
+        return t3
+
+    # Return pure raw text (only for the distinct outputs).
+    combined = f"--- OCR OUTPUT 1 ---\n{t3}\n\n--- OCR OUTPUT 2 ---\n{t6}"
+    return clean_text(combined)
 
 
 def hybrid_extract(pdf_path):
     pages = extract_text_pdfplumber(pdf_path)
-    images = convert_from_path(pdf_path)
+    images = convert_from_path(pdf_path, dpi=300)
 
     final_pages = []
 

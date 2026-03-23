@@ -49,6 +49,11 @@ def extract_structured_data(text, doc_type):
 
     try:
         data = json.loads(raw_output)
+        # Convert all non-None values to string to satisfy Pydantic strict string fields
+        for k, v in data.items():
+            if v is not None:
+                data[k] = str(v)
+        
         validated = schema(**data)
         return validated.dict(), prompt, raw_output
 
@@ -74,6 +79,9 @@ Output:
 
         try:
             data = json.loads(fixed_output)
+            for k, v in data.items():
+                if v is not None:
+                    data[k] = str(v)
             validated = schema(**data)
             return validated.dict(), prompt, fixed_output
         except:
