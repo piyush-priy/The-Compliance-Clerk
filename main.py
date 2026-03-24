@@ -17,6 +17,7 @@ from parser.lease_pipeline import (
     extract_survey_from_filename,
     extract_survey_from_na_filename,
 )
+from parser.na_pipeline import extract_na_record_from_text
 from llm.extractor import extract_structured_data
 from storage.logger import log_llm
 
@@ -124,6 +125,34 @@ def process_single_pdf(pdf_path, save_debug=False):
         _write_json(f"output/{base}_parsed_pages_raw.json", pages)
         _write_json(f"output/{base}_parsed_pages.json", relevant_pages)
 
+    # Deterministic NA order extraction: all fields are on page 1 in a rigid template.
+    if doc_type == "na_order":
+        merged_text = "\n".join(p["text"] for p in relevant_pages if p["text"].strip())
+        na_record = extract_na_record_from_text(merged_text)
+
+        # Overlay filename-based survey number (more reliable than OCR).
+        base_name = os.path.basename(pdf_path)
+        fname_survey = extract_survey_from_na_filename(base_name)
+        if fname_survey:
+            na_record["survey_number"] = fname_survey
+
+        has_core = _first_non_empty(
+            na_record.get("na_area"),
+            na_record.get("na_order_no"),
+            na_record.get("survey_number"),
+        ) is not None
+
+        if has_core:
+            print(f"[SUCCESS] Deterministic NA extraction: {na_record}")
+            return {
+                "file": pdf_path,
+                "doc_type": doc_type,
+                "records": [na_record],
+                "llm_inputs": [],
+                "relevant_pages": [p["page"] for p in relevant_pages],
+            }
+        print("[WARN] Deterministic NA extraction failed, falling back to LLM")
+
     # Deterministic lease extraction: classify pages and extract key fields directly.
     if doc_type == "lease":
         lease_record = extract_lease_record_from_pages(relevant_pages)
@@ -157,7 +186,7 @@ def process_single_pdf(pdf_path, save_debug=False):
                 "relevant_pages": [p["page"] for p in relevant_pages],
             }
 
-    # For non-lease docs (or lease fallback), prepare optimized text payloads.
+    # For docs where deterministic extraction failed, prepare LLM text payloads.
     llm_inputs = []
     if doc_type in {"lease", "na_order"}:
         merged_text_parts = []
