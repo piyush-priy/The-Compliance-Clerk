@@ -134,7 +134,7 @@ python main.py
 
 3. Results appear in `output/results.xlsx` and `output/results.json`.
 
-### PDF File Naming Convention and Structure Assumption
+## PDF File Naming Convention and Structure Assumption
 
 **[!IMPORTANT]**
 
