@@ -4,18 +4,20 @@ A hybrid document extraction pipeline for processing legally dense, mixed-langua
 
 ## How It Works
 
-The pipeline applies three extraction layers, in priority order:
+The pipeline follows a 5-step architecture:
 
-1. **Deterministic Parser** — Regex-based extraction directly from PDF text or OCR output. Handles survey numbers, dates, areas, order numbers, and document numbers with high accuracy. This is the primary, most reliable layer.
-2. **OCR Engine** — When `pdfplumber` returns garbled or empty text (e.g. scanned images), the system falls back to Tesseract OCR with OpenCV preprocessing (2× Lanczos upscaling, grayscale conversion) supporting English, Hindi, and Gujarati.
-3. **LLM Fallback** — When deterministic extraction is insufficient, a compacted payload is sent to the Groq API (`llama-3.3-70b-versatile`) for structured field extraction. Deterministic values always override LLM output in the final merge.
+1. **Extract Text (OCR / PDF)** — `pdf_parser.py` tries pdfplumber first; falls back to Tesseract OCR with OpenCV preprocessing (2× Lanczos upscaling, grayscale) supporting English, Hindi, and Gujarati.
+2. **Clean + Reduce Noise** — `page_filter.py` strips footers, OCR garbage, legal boilerplate, selects the best OCR variant, and keeps only signal-dense pages.
+3. **LLM Extracts Structured Data** — A compacted payload is sent to the Groq API (`llama-3.3-70b-versatile`) for structured field extraction. Deterministic regex pipelines (`na_pipeline.py`, `lease_pipeline.py`) extract high-confidence fields first; the LLM fills gaps, and deterministic values **always override** LLM output.
+4. **Schema Enforcement (Pydantic)** — Every LLM output is validated against strict Pydantic models (`LeaseRecord`, `NAOrder`).
+5. **Post-processing (Regex Fixes)** — Field name normalization, area/survey-number cleanup, and deterministic overrides are merged into the final output.
 
 ```
 PDF files (data/)
      │
      ▼
  ┌──────────────────────┐
- │  pdf_parser.py        │  pdfplumber → text, or OCR fallback
+ │  pdf_parser.py        │  Step 1: pdfplumber → text, or OCR fallback
  └──────────┬───────────┘
             ▼
  ┌──────────────────────┐
@@ -23,20 +25,24 @@ PDF files (data/)
  └──────────┬───────────┘
             ▼
  ┌──────────────────────┐
- │  page_filter.py       │  strip noise, select relevant pages
+ │  page_filter.py       │  Step 2: strip noise, select relevant pages
  └──────────┬───────────┘
             ▼
  ┌──────────────────────┐
- │  lease_pipeline.py    │  deterministic lease extraction
- │  na_pipeline.py       │  deterministic NA order extraction
+ │  lease_pipeline.py    │  deterministic lease extraction (regex)
+ │  na_pipeline.py       │  deterministic NA order extraction (regex)
  └──────────┬───────────┘
             ▼
  ┌──────────────────────┐
- │  llm/extractor.py     │  LLM fallback (Groq API)
+ │  llm/extractor.py     │  Step 3: LLM extraction (Groq API)
  └──────────┬───────────┘
             ▼
  ┌──────────────────────┐
- │  main.py              │  merge by survey number → XLSX + JSON
+ │  schemas/             │  Step 4: Pydantic validation
+ └──────────┬───────────┘
+            ▼
+ ┌──────────────────────┐
+ │  main.py              │  Step 5: post-process, merge → XLSX + JSON
  └──────────────────────┘
 ```
 
@@ -56,7 +62,7 @@ navspark/
 │   │                             #   classification, doc no, area, survey no,
 │   │                             #   multi-page date consensus
 │   └── na_pipeline.py            # Deterministic NA order extraction — Gujarati
-│   │                             #   regex for order no, date, village, survey, area
+│                                 #   regex for order no, date, village, survey, area
 ├── llm/
 │   ├── extractor.py              # Groq API client, token-budget management,
 │   │                             #   smart text compaction, JSON parsing/repair
@@ -67,7 +73,7 @@ navspark/
 ├── storage/
 │   └── logger.py                 # Logs every LLM prompt/response to logs/llm_logs.jsonl
 ├── data/                         # ⬅ Place input PDF files here
-├── output/                       # ⬅ Generated outputs appear here
+├── output/                       # ⬅ Generated outputs (results.xlsx + results.json)
 ├── logs/                         # ⬅ LLM interaction logs (JSONL)
 ├── requirements.txt
 ├── .env                          # GROQ_API_KEY (not committed)
@@ -82,9 +88,6 @@ After processing, the `output/` directory contains:
 |------|-------------|
 | `results.xlsx` | Unified spreadsheet with one row per survey number, merging NA and lease data |
 | `results.json` | Same unified records as JSON |
-| `document_records.json` | Full per-document extraction details (deterministic + LLM) |
-| `*_parsed_pages.json` | Cleaned, filtered pages for each input PDF (debug) |
-| `*_parsed_pages_raw.json` | Raw extracted pages before filtering (debug) |
 
 The unified table has these columns:
 
@@ -131,14 +134,28 @@ python main.py
 
 3. Results appear in `output/results.xlsx` and `output/results.json`.
 
-### File Naming Conventions
+### PDF File Naming Convention
 
-The parser uses filename patterns to supplement OCR-based extraction:
+> [!IMPORTANT]
+> Each PDF file **must** follow the exact naming scheme shown below. The pipeline relies on filename patterns to extract survey numbers and document numbers as a fallback when OCR is unreliable. Incorrectly named files may produce incomplete or missing records.
 
-- **Lease Deeds** — Include the survey number and doc number in the filename:
-  `Rampura Mota S.No.- 251p2 Lease Deed No.- 141.pdf`
-- **NA Orders** — Use the survey number followed by `FINAL ORDER`:
-  `251-p2 FINAL ORDER.pdf`
+**Lease Deeds** — format: `<Village> S.No.- <SurveyNo> Lease Deed No.- <DocNo>.pdf`
+
+```
+Rampura Mota S.No.- 251p2 Lease Deed No.- 141.pdf
+Rampura Mota S.No.-255 Lease Deed No.-838.pdf
+Rampura Mota S.No.-256 Lease Deed No.-854.pdf
+Rampura Mota S.No.-257 Lease Deed No. -837.pdf
+```
+
+**NA Orders** — format: `<SurveyNo> FINAL ORDER.pdf`
+
+```
+251-p2 FINAL ORDER.pdf
+255 FINAL ORDER.pdf
+256 FINAL ORDER.pdf
+257 FINAL ORDER.pdf
+```
 
 ### Environment Variables
 

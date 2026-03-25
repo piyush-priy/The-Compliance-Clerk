@@ -93,7 +93,7 @@ def _target_pages_for_doc_type(doc_type):
     return None
 
 
-def process_single_pdf(pdf_path, save_debug=False):
+def process_single_pdf(pdf_path):
     print(f"\n[INFO] Processing PDF: {pdf_path}")
 
     file_type = detect_document_type_from_filename(pdf_path)
@@ -119,11 +119,6 @@ def process_single_pdf(pdf_path, save_debug=False):
     print("[INFO] Relevant Pages:")
     for page in relevant_pages:
         print(f"  - Page {page['page']}")
-
-    if save_debug:
-        base = os.path.splitext(os.path.basename(pdf_path))[0]
-        _write_json(f"output/{base}_parsed_pages_raw.json", pages)
-        _write_json(f"output/{base}_parsed_pages.json", relevant_pages)
 
     # Deterministic NA order extraction: all fields are on page 1 in a rigid template.
     deterministic_records = []
@@ -348,7 +343,7 @@ def run_directory_pipeline(input_dir="data"):
     processed_docs = []
 
     for pdf_path in pdf_files:
-        processed = process_single_pdf(pdf_path, save_debug=True)
+        processed = process_single_pdf(pdf_path)
         processed_docs.append(processed)
 
     # LLM is intentionally called only after all files have been extracted and optimized.
@@ -356,7 +351,6 @@ def run_directory_pipeline(input_dir="data"):
 
     unified_rows = merge_na_and_lease(processed_docs)
 
-    _write_json("output/document_records.json", processed_docs)
     _write_json("output/results.json", unified_rows)
 
     csv_columns = [
