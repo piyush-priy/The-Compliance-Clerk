@@ -17,8 +17,26 @@ def _is_footer_or_signature(line):
         "order no.",
         "page ",
         "unadkat",
+        "unabkat",
+        "e-sign",
+        "adobe acrobat",
+        "date :",
+        " ist",
+        "7022026",
+        "authsnsed signacor",
+        "authorised signatory",
     ]
     return any(marker in lower for marker in footer_markers)
+
+
+def _is_ocr_garbage(line):
+    """Detect lines that are mostly OCR noise (low alphanumeric density)."""
+    if len(line) < 4:
+        return True
+    alnum_count = sum(1 for c in line if c.isalnum())
+    ratio = alnum_count / len(line)
+    # Lines with very few real characters relative to length are garbage.
+    return ratio < 0.35 and len(line) > 5
 
 
 def _keep_keywords(doc_type):
@@ -120,7 +138,48 @@ def _select_best_ocr_variant(text, doc_type):
     return ranked[0]
 
 
-def _basic_clean_lines(text):
+def _truncate_at_conditions(text):
+    """For NA orders: strip everything from the conditions section onwards.
+
+    All extractable fields (order no, date, village, survey, area) appear
+    *before* the 'શરતો :-' marker.  Everything after is boilerplate.
+    """
+    marker = "શરતો"
+    idx = text.find(marker)
+    if idx != -1:
+        return text[:idx]
+    return text
+
+
+_LEASE_BOILERPLATE_MARKERS = [
+    "bonafide needs and requirements",
+    "rights, privileges, benefits",
+    "rights, privileges",
+    "appurtenances, easements",
+    "hereinafter contained",
+    "hereinafter appearing",
+    "terms and conditions",
+    "grant of lease",
+    "record the said",
+    "solar power projects",
+    "સૌર પાવર પ્રોજેક્ટ",
+    "સૌર ઉર્જાના ઉત્પાદન",
+    "પટે લેનાર હાલમાં",
+    "absolutely clear and marketable",
+    "unencumbered and physical possession",
+    "right, interest, claim or concern",
+    "approaching the lessors",
+    "approached the lessors",
+]
+
+
+def _is_lease_boilerplate(line):
+    """Detect pure legal boilerplate in lease deeds that holds no field data."""
+    lower = line.lower()
+    return any(m in lower for m in _LEASE_BOILERPLATE_MARKERS)
+
+
+def _basic_clean_lines(text, doc_type=None):
     lines = text.split("\n")
     cleaned = []
     seen_lines = set()
@@ -134,6 +193,10 @@ def _basic_clean_lines(text):
             continue
         if _is_footer_or_signature(line_stripped):
             continue
+        if _is_ocr_garbage(line_stripped):
+            continue
+        if doc_type == "lease" and _is_lease_boilerplate(line_stripped):
+            continue
         if line_stripped in seen_lines:
             continue
 
@@ -143,31 +206,80 @@ def _basic_clean_lines(text):
     return cleaned
 
 
+def _extract_na_core_lines(lines):
+    """For NA orders: keep ONLY lines containing the 5 extractable fields.
+
+    Target fields & their line markers:
+      - na_order_no  → 'હુકમ નં' (order number line)
+      - order_date   → 'તા.' immediately after district line (જિ.)
+      - village      → 'ગામ' in the body paragraph
+      - survey_number → 'સરવે/બ્લોક નંબર'
+      - na_area      → 'વિસ્તાર' (total area)
+    """
+    core_markers = [
+        "હુકમ નં",           # order number
+        "સરવે/બ્લોક",        # survey/block number
+        "સરવે",              # survey fallback
+        "વિસ્તાર",           # total area
+        "ક્ષેત્રફળ",          # leased area (useful context)
+        "ગામ",               # village
+    ]
+    # Also keep the order date line: 'તા.DD/MM/YYYY' that appears right after 'જિ.'
+    keep = []
+    prev_was_district = False
+    for line in lines:
+        lower = line.lower()
+        # Keep the date line immediately after district header
+        if prev_was_district and "તા." in line:
+            keep.append(line)
+            prev_was_district = False
+            continue
+        prev_was_district = "જિ." in line or "જિ " in line
+
+        if any(m in line for m in core_markers):
+            keep.append(line)
+    return keep
+
+
 def clean_irrelevant_lines(text, doc_type):
     # Reparse OCR payload: keep the strongest OCR variant before line-level filtering.
     reparsed_text = _select_best_ocr_variant(text, doc_type)
 
-    lines = _basic_clean_lines(reparsed_text)
+    # Section-level truncation: for NA orders, cut everything after conditions.
+    if doc_type == "na_order":
+        reparsed_text = _truncate_at_conditions(reparsed_text)
+
+    lines = _basic_clean_lines(reparsed_text, doc_type)
     if not lines:
         return ""
 
+    # NA orders: precision extraction — keep only lines with target field data.
+    if doc_type == "na_order":
+        core = _extract_na_core_lines(lines)
+        if core:
+            return "\n".join(core)
+        # Fallback: return all cleaned lines if precision extraction found nothing.
+        return "\n".join(lines)
+
+    # Lease docs: the lease_pipeline has its own page classification + regex
+    # extraction that needs the full text context.  Only basic cleaning
+    # (footers, OCR garbage, boilerplate) is applied — no keyword filtering.
+    if doc_type == "lease":
+        return "\n".join(lines)
+
+    # Unknown doc types: keyword-only filtering.
     keep_keywords = _keep_keywords(doc_type)
     if not keep_keywords:
         return "\n".join(lines)
 
-    # Keep lines that contain strong document-specific keywords and keep local context.
     keep_indices = set()
     for i, line in enumerate(lines):
         lower = line.lower()
         if any(keyword in lower for keyword in keep_keywords):
             keep_indices.add(i)
-            if i - 1 >= 0:
-                keep_indices.add(i - 1)
-            if i + 1 < len(lines):
-                keep_indices.add(i + 1)
 
-    # Fall back to basic cleaned lines if keyword matching is too sparse on noisy OCR.
-    if len(keep_indices) < 5:
+    # Fall back to basic cleaned lines if keyword matching is too sparse.
+    if len(keep_indices) < 3:
         return "\n".join(lines)
 
     selected = [lines[i] for i in sorted(keep_indices)]
