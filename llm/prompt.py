@@ -12,7 +12,6 @@ def build_prompt(text, doc_type):
         doc_guidance = """
 Lease-specific hints:
 - `survey_number` may appear as: survey no, block number, સરવે નંબર, બ્લોક નંબર.
-- `village` may appear as ગામ, Village, Moje, or Mouje.
 - `lease_area` may appear as: area, extent, sq.m, hectare, acre, ચો.મી, ક્ષેત્રફળ.
 - `lease_start_date` may be the date of the lease deed.
 - `lease_deed_doc_no` may appear as Document No, Doc No, દસ્તાવેજ નં, or Registration Number.
@@ -29,7 +28,6 @@ Lease-specific hints:
         doc_guidance = """
 NA-order-specific hints:
 - `survey_number` may appear as સરવે/બ્લોક નંબર or survey/block number.
-- `village` may appear as ગામ, Village, Moje, or Mouje.
 - `na_area` is the TOTAL survey area (વિસ્તાર), NOT the leased subset (ક્ષેત્રફળ). Look for the number after વિસ્તાર.
 - `order_date` is usually near હુકમ નં./પ્રાંત કચેરી/તા.
 - `na_order_no` may appear as Order No, હુકમ નં, જમીન/વશી/..., or Case Number.
@@ -43,6 +41,7 @@ Rules:
 - Text may be English/Gujarati.
 - Correct only obvious OCR confusions (O/0, I/1, S/5) when context is clear.
 - Return ONLY one JSON object.
+- Always return output in English, even if the input is Gujarati.
 - Include exactly these fields:
 {fields}
 - Missing values must be null.

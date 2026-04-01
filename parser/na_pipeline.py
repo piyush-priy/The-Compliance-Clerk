@@ -32,8 +32,8 @@ def _clean_number(raw):
 
 # ── Gujarati village-name transliteration (common names) ────────────
 _VILLAGE_MAP = {
-    "રામપુરા મોટા": "Rampura Mota",
-    "રામપુરા": "Rampura",
+    # "રામપુરા મોટા": "Rampura Mota",
+    # "રામપુરા": "Rampura",
 }
 
 

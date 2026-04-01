@@ -85,6 +85,24 @@ def _first_non_empty(*values):
     return None
 
 
+def _has_non_english_text(value):
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    return bool(re.search(r"[^\x00-\x7F]", text))
+
+
+def _is_english_like_text(value):
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    return text.isascii() and bool(re.search(r"[A-Za-z]", text))
+
+
 def _target_pages_for_doc_type(doc_type):
     if doc_type == "na_order":
         return [1]
@@ -229,9 +247,22 @@ def run_llm_final_step(processed_docs):
                 if d_records:
                     d_rec = d_records[0]
                     for key, val in d_rec.items():
-                        # Override LLM values ONLY if the deterministic parser found a non-null, valid value
-                        if val is not None and not str(key).startswith("_"):
-                            merged_data[key] = val
+                        if str(key).startswith("_"):
+                            continue
+
+                        # Only override with meaningful deterministic values.
+                        if val is None:
+                            continue
+                        deterministic_text = str(val).strip()
+                        if not deterministic_text or deterministic_text.lower() == "none":
+                            continue
+
+                        # Keep English LLM value when deterministic output is Gujarati/non-English.
+                        llm_value = merged_data.get(key)
+                        if _has_non_english_text(val) and _is_english_like_text(llm_value):
+                            continue
+
+                        merged_data[key] = val
                             
                 results.append(merged_data)
                 print(f"[SUCCESS] Extracted payload: {page_marker}")
